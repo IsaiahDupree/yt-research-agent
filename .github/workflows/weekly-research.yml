@@ -1,0 +1,99 @@
+name: Weekly research scan
+
+# Runs every Monday at 09:00 UTC + can be triggered manually from the
+# Actions tab.
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      niche:
+        description: "Niche to scan (default: algorithmic trading)"
+        required: false
+        default: "algorithmic trading"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  scan:
+    name: Run pipeline + open PR with diff
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install yt-research-agent
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Identify last week's report (if any)
+        id: previous
+        run: |
+          PREV=$(ls -1 reports/weekly/*.md 2>/dev/null | sort | tail -n 1 || true)
+          echo "path=$PREV" >> "$GITHUB_OUTPUT"
+          if [ -n "$PREV" ]; then
+            echo "Previous report: $PREV"
+          else
+            echo "No previous report — this run will produce the baseline."
+          fi
+
+      - name: Run weekly report (demo fixtures by default)
+        env:
+          NICHE: ${{ github.event.inputs.niche || 'algorithmic trading' }}
+          # Real keys can be wired in via repo secrets if you want live data:
+          # YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          # REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+        run: |
+          mkdir -p reports/weekly
+          python -m youtube_research_agent.cli report \
+            --niche "$NICHE" \
+            --demo \
+            --output reports/weekly/
+
+      - name: Identify new report path
+        id: current
+        run: |
+          NEW=$(ls -1 reports/weekly/*.md | sort | tail -n 1)
+          echo "path=$NEW" >> "$GITHUB_OUTPUT"
+          echo "New report: $NEW"
+
+      - name: Render diff (if a previous report exists)
+        if: steps.previous.outputs.path != ''
+        run: |
+          mkdir -p reports/diffs
+          DIFF_PATH="reports/diffs/$(basename ${{ steps.current.outputs.path }} .md).diff.md"
+          python -m youtube_research_agent.cli diff \
+            "${{ steps.previous.outputs.path }}" \
+            "${{ steps.current.outputs.path }}" \
+            --output "$DIFF_PATH"
+          echo "DIFF_PATH=$DIFF_PATH" >> "$GITHUB_ENV"
+          echo "=== Diff body for PR ==="
+          cat "$DIFF_PATH"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: weekly-research/${{ github.run_id }}
+          delete-branch: true
+          title: "weekly research: ${{ steps.current.outputs.path }}"
+          commit-message: |
+            chore(research): weekly report ${{ steps.current.outputs.path }}
+          body-path: ${{ env.DIFF_PATH }}
+          # When there is no previous report (first run), body-path is unset
+          # — peter-evans handles that with an empty body.
+          add-paths: |
+            reports/weekly/*.md
+            reports/diffs/*.md

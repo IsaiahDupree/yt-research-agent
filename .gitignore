@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.local
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Output (generated briefs); keep dir
+output/*
+!output/.gitkeep
+
+# Cache for API responses (saves quota during dev)
+.cache/

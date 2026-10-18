@@ -1,0 +1,2 @@
+[console_scripts]
+yt-research = youtube_research_agent.cli:main
